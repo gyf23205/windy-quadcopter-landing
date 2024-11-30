@@ -32,10 +32,10 @@ def simulate_with_positions(base_wind, gust_amplitude, initial_x, initial_z, num
         while time < simulation_time:
             # Wind velocity components (constant base wind + gust)
             gust = np.random.uniform(-gust_amplitude, gust_amplitude)
-            wind_speed = base_wind + gust
+            wind_speed = base_wind + gust # wind speed is a scalar?
 
             # Relative velocity
-            u_rel = vx - wind_speed
+            u_rel = vx - wind_speed # only wind along x-axis?
             w_rel = vz
 
             # Aerodynamic drag forces
@@ -43,11 +43,11 @@ def simulate_with_positions(base_wind, gust_amplitude, initial_x, initial_z, num
             f_z_drag = -0.5 * air_density * drag_coefficient * effective_area * w_rel * abs(w_rel)
 
             # Control forces (currently zero)
-            F1, F2 = control_algorithm([x, z, vx, vz])
+            F1, F2 = control_algorithm([x, z, vx, vz]) # Not considerding thetha?
             total_thrust = F1 + F2
 
-            # Net forces
-            f_x = f_x_drag
+            # Net forces.
+            f_x = f_x_drag # why thrust only works on the z direction?
             f_z = f_z_drag + total_thrust - mass * gravity
 
             # Update accelerations
