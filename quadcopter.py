@@ -3,13 +3,13 @@ import numpy as np
 from plan_dubin import plan_dubins_path
 
 class QuadCopter(object):
-    def __init__(self, x0, Q, R, N):
+    def __init__(self, init_state, Q, R, N, v_max, r_max):
         '''
         Q: np array with size (3,), containing the diagnal elements of the PSD matrix which is used to penalize the states in the quadratic MPC cost.
         R: Scalar, penalize inputs in the MPC cost.
         N: Time horizen of the MPC solver.
         '''
-        self.states = x0
+        self.states = init_state
         self.m = 1.5 # Mass in kg
         self.L = 0.2 # Arms length in meter
         self.dt = 0.1
@@ -21,12 +21,13 @@ class QuadCopter(object):
         self.C_r = 0.01
         self.F_max = 15
         self.W_max = 10
+        self.v_max = v_max
+        self.r_max = r_max
 
-        self.Q_x = Q[0]
-        self.Q_y = Q[1]
-        self.Q_theta = Q[2]
+        self.Q = Q
         self.R = R
         self.N = N
+        self.setup()
 
     
     def update_param(self, x0, ref, k, N):
@@ -36,7 +37,7 @@ class QuadCopter(object):
                 ref_state = ref[k+l, :]
             else:
                 ref_state = ref[-1, :]
-            xt = casadi.DM([ref_state[0], ref_state[1], ref_state[2]])
+            xt = casadi.DM(ref_state[0:6])
             p = casadi.vertcat(p, xt)
         return p
     
@@ -55,7 +56,7 @@ class QuadCopter(object):
 
         # states = [x, z, theta, x_dot, z_dot, theta_dot]
         states = casadi.SX.sym('x', 6) # 3D position (x, y, z), row (theta), pitch (phi), yaw (psi)
-        u = casadi.sx.sym('u', 2) # Forces  
+        u = casadi.SX.sym('u', 2) # Forces
         self.n_states = states.numel()
         self.n_controls = u.numel()
 
@@ -74,7 +75,7 @@ class QuadCopter(object):
         X = casadi.SX.sym('X', self.n_states, self.N + 1)
         U = casadi.SX.sym('U', self.n_controls, self.N)
         P = casadi.SX.sym('P', (self.N + 1) * self.n_states) # Reference path?
-        Q = casadi.diagcat(self.Q_x, self.Q_y, self.Q_theta)
+        Q = casadi.diagcat(*self.Q)
         R = casadi.diagcat(self.R, self.R)
 
         cost = 0
@@ -120,12 +121,16 @@ class QuadCopter(object):
         lbx = casadi.DM.zeros((self.n_states * (self.N + 1) + self.n_controls * self.N, 1))
         ubx = casadi.DM.zeros((self.n_states * (self.N + 1) + self.n_controls * self.N, 1))
 
-        lbx[0:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
-        lbx[1:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
-        lbx[2:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
-
-        ubx[0:self.n_states * (self.N + 1):self.n_states] = casadi.inf
-        ubx[1:self.n_states * (self.N + 1):self.n_states] = casadi.inf
+        for i in range(self.n_states):
+            if i in [0, 1, 2]:
+                lbx[i:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
+                ubx[i:self.n_states * (self.N + 1):self.n_states] = casadi.inf
+            elif i in [3, 4]:
+                lbx[i:self.n_states * (self.N + 1):self.n_states] = -self.v_max
+                ubx[i:self.n_states * (self.N + 1):self.n_states] = self.v_max
+            else:
+                lbx[i:self.n_states * (self.N + 1):self.n_states] = -self.r_max
+                ubx[i:self.n_states * (self.N + 1):self.n_states] = self.r_max
 
         lbx[self.n_states * (self.N + 1):self.n_states * (self.N + 1) + self.n_controls * self.N:self.n_controls] = 0
         ubx[self.n_states * (self.N + 1):self.n_states * (self.N + 1) + self.n_controls * self.N:self.n_controls] = self.F_max

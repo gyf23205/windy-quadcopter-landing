@@ -20,7 +20,7 @@ def steer(from_node, to_node, max_step_size):
 
 
 class RStarPlanner:
-    def __init__(self, start, goal, x_range, y_range, max_step_size=1.0, search_radius=2.0, max_iterations=1000):
+    def __init__(self, start, goal, x_range, y_range, max_step_size=0.5, search_radius=2.0, max_iterations=1000, interval_time = 1.0):
         self.start = start  # (x, y)
         self.goal = goal  # (x, y)
         # self.obstacles = obstacles  # [(ox, oy, radius), ...]
@@ -33,6 +33,7 @@ class RStarPlanner:
         self.nodes = [start]
         self.parents = {}
         self.kd_tree = KDTree([start[:2]])
+        self.interval_time = 1.0
 
     def sample_point(self):
         """Randomly sample a point in the space."""
@@ -77,9 +78,9 @@ class RStarPlanner:
             node = self.parents[node]
         path.append(self.start)
         path.reverse()
-        return path
+        return np.array(path)
 
-    def plan(self):
+    def _plan(self):
         """Plan the path using the R* algorithm."""
         for _ in range(self.max_iterations):
             random_point = self.sample_point()
@@ -101,16 +102,27 @@ class RStarPlanner:
         return None  # No path found
 
 
-def compute_theta(path):
-    """Compute orientation theta for each point on the path."""
-    thetas = []
-    for i in range(len(path) - 1):
-        dx = path[i + 1][0] - path[i][0]
-        dy = path[i + 1][1] - path[i][1]
-        theta = math.atan2(dy, dx)
-        thetas.append(theta)
-    thetas.append(thetas[-1])  # Keep the last theta constant
-    return thetas
+    def compute_theta(self, path):
+        """Compute orientation theta for each point on the path."""
+        thetas = []
+        for i in range(len(path) - 1):
+            dx = path[i + 1][0] - path[i][0]
+            dy = path[i + 1][1] - path[i][1]
+            theta = math.atan2(dy, dx)
+            thetas.append(theta+np.pi)
+        thetas.append(thetas[-1])  # Keep the last theta constant
+        return np.array(thetas)[..., None]
+    
+    def plan(self):
+        path_xz = self._plan()
+        path_th = self.compute_theta(path_xz)
+        path = np.concatenate([path_xz, path_th], axis=-1)
+        # Generate noob velocity reference, since there won't be cost on the velocity
+        path_v = np.zeros(path.shape)
+        path = np.concatenate([path, path_v], axis=-1)
+        return path
+
+
 
 
 if __name__=='__main__':
@@ -123,11 +135,12 @@ if __name__=='__main__':
 
     # Plan using R* algorithm
     planner = RStarPlanner(start, goal, x_range, y_range)
-    path = planner.plan()
+    path_all = planner.plan()
 
     # Compute orientation
-    if path:
-        thetas = compute_theta(path)
+    if path_all is not None:
+        thetas = path_all[:, 2]
+        path = path_all[:, 0:2]
 
         # Plot the result
         plt.figure(figsize=(8, 8))

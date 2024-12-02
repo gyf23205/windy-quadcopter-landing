@@ -1,53 +1,20 @@
 import numpy as np
-import cv2
 import casadi
 import matplotlib
 matplotlib.use('tkagg')
 import matplotlib.pyplot as plt
 from matplotlib import animation
-from mpc_cbf.plan_dubins import plan_dubins_path
-from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
-from utils import dm_to_array
-from env import GridWorld
+from r_star import RStarPlanner
+from quadcopter import QuadCopter
+from matplotlib.lines import Line2D
+from plan_dubin import plan_dubins_path
 
 
 
-def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, step_horizon, N, reference, save=False):
-    def plot_heatmap(world, obstacle, i):
-        '''
-        Inputs:
-        world.heatmap: 2-D matrix with size (w, h). Heatmap.
-        obstacle: Binary 2-D matrix with size (w, h).
-        world.agents: A list contains all the agents of Agent type. Each one has 2-D position
-
-        return:
-        hm_show: RGB map containing heatmap, obstacles and agents.
-        '''
-        # Normalize heatmap
-        hm_normed = ((world.temp_max - heatmaps[i]) / world.temp_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
-        
-        # Colormap
-        green_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
-        green_colormap[:, 0, 0] = np.linspace(0, 100, 256)  # Blue channel  0 - 100
-        green_colormap[:, 0, 1] = np.arange(256)  # Green channel  0 - 255
-        green_colormap[:, 0, 2] = np.linspace(0, 100, 256)  # Red channel  0 - 100
-        hm_show = cv2.applyColorMap(hm_normed, green_colormap)
-        
-        # # Mark agents
-        # for agent in world.agents:
-        #     dist = np.sqrt((world.x_coord - agent.states[0])**2 + (world.y_coord - agent.states[1])**2)
-        #     agent_area = dist < agent.r_s
-        #     hm_show[agent_area] = [255, 255, 255]  # White color for agent
-        # hm_show[int(agent.state[0]), int(agent.state[1]), :] = 0
-
-        # # Mark Obstacles
-        # hm_show[obstacle == 1] = [50, 50, 255]  
-
-        return hm_show
-    
-
-    def create_triangle(state=[0,0,0], h=1, w=0.5, update=False):
+def simulate(ref_states, cat_states, num_frames, reference, save=False):
+    def create_triangle(state=[0,0,0], h=2, w=0.5, update=False):
         x, y, th = state
+        th += np.pi/2
         triangle = np.array([
             [h, 0   ],
             [0,  w/2],
@@ -66,7 +33,7 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
             return coords[:3, :]
 
     def init():
-        hm.set_data(np.ones(world.heatmap.shape))
+        # hm.set_data(np.ones(world.heatmap.shape))
         return path, horizon#, current_state, target_state,
 
     def animate(i):
@@ -99,8 +66,8 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
         current_state.set_xy(create_triangle([x, y, th], update=True))
 
         # update heatmap
-        img = plot_heatmap(world, None, i)
-        hm.set_data(img)
+        # img = plot_heatmap(world, None, i)
+        # hm.set_data(img)
         # # update target_state
         # xy = target_state.get_xy()
         # target_state.set_xy(xy)
@@ -109,16 +76,9 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
 
     # create figure and axes
     fig, ax = plt.subplots(figsize=(6, 6))
-    size_world = world.heatmap.shape
-    min_scale = 0
-    ax.set_xlim(left = min_scale, right = world.len_grid * size_world[0])
-    ax.set_ylim(bottom = min_scale, top = world.len_grid * size_world[1])
+    ax.set_xlim(left = -10, right = 10)
+    ax.set_ylim(bottom = -0, top = 15)
 
-    # circle = plt.Circle((obs_x, obs_y), obs_diam/2, color='r')
-    # ax.add_patch(circle)
-
-    # create lines:
-    #   path
     path, = ax.plot([], [], 'r', linewidth=2)
 
     ref_path, = ax.plot([], [], 'b', linewidth=2)
@@ -126,7 +86,7 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     horizon, = ax.plot([], [], 'x-g', alpha=0.5)
 
 
-    hm = plt.imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]])
+    # hm = plt.imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]])
 
     #   current_state
     current_triangle = create_triangle(reference[:3])
@@ -136,7 +96,11 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     # target_triangle = create_triangle(reference[3:])
     # target_state = ax.fill(target_triangle[:, 0], target_triangle[:, 1], color='b')
     # target_state = target_state[0]
+    legend_elements = [Line2D([0], [0], marker='>', color='y', markerfacecolor='y', markersize=15, label='Robots'),
+                   Line2D([0], [0], marker='x',color='g', markerfacecolor='g', markersize=15,label='MPC Predicted Path',),
+                   ]
 
+    ax.legend(handles=legend_elements, loc='upper right')
     sim = animation.FuncAnimation(
         fig=fig,
         func=animate,
@@ -149,78 +113,86 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     )
 
     if save == True:
-        sim.save('results/heatmap.gif', writer='ffmpeg', fps=30)
+        sim.save('quad.gif', writer='ffmpeg', fps=30)
     plt.show()
     return sim
 
+def plot_ref(path, thetas, start, goal, x_range, y_range):
+        # Plot the result
+    plt.figure(figsize=(8, 8))
+    # for ox, oy, radius in obstacles:
+    #     circle = plt.Circle((ox, oy), radius, color='r', alpha=0.5)
+    #     plt.gca().add_patch(circle)
+    plt.plot([p[0] for p in path], [p[1] for p in path], 'b-', label="Path")
+    plt.scatter([p[0] for p in path], [p[1] for p in path], c='b')
+    plt.quiver(
+        [p[0] for p in path], [p[1] for p in path],
+        np.cos(thetas), np.sin(thetas), angles='xy', scale_units='xy', scale=1, color='g', label='Theta'
+    )
+    plt.scatter([start[0], goal[0]], [start[1], goal[1]], c='g', label='Start/Goal')
+    plt.xlim(x_range)
+    plt.ylim(y_range)
+    plt.legend()
+    plt.grid()
+    plt.title("R* Path with Orientation")
+    plt.show()
+
 def main(args=None):
-
-    Q_x = 10
-    Q_y = 10
-    Q_theta = 10
-    R = 0.5
-
     dt = 0.1
-    N = 20
+    N = 8
     # idx = 0
     t0 = 0
 
     # x in [0, size_world[0]], y in [0, size_world[1] * world.len_grid]
     x_0 = 0
-    y_0 = 0
+    y_0 = 10
     theta_0 = 0
 
     # x in [0, size_world[0]], y in [0, size_world[1]* world.len_grid]
-    x_goal = 3
-    y_goal = -5
+    x_goal = 0
+    y_goal = 0
     theta_goal = 0
 
-    r = 1 
-    v = 1
-    path_x, path_y, path_yaw, _, _ = plan_dubins_path(x_0, y_0, theta_0, x_goal, y_goal, theta_goal, r, step_size=v*dt)
+    r_max = 1 # Max angular velocity
+    v_max = 1 # Max linear velocity
+    
+    # start = (x_0, y_0)
+    # goal = (x_goal, y_goal)
+    # x_range = (-5, 5)
+    # y_range = (-1, 12)
+    # planner = RStarPlanner(start, goal, x_range, y_range)
+    # ref_states = planner.plan()
+    path_x, path_y, path_yaw, _, _ = plan_dubins_path(x_0, y_0, theta_0, x_goal, y_goal, theta_goal, r_max, step_size=v_max*dt)
+    ref_states = np.array([path_x, path_y, -path_yaw]).T
+    ref_states = np.concatenate([ref_states, np.zeros(ref_states.shape)], axis=-1)
+    # plot_ref(ref_states.T[:, 0:2], ref_states.T[:, 2], start, goal, x_range, y_range)
 
-    ref_states = np.array([path_x, path_y, path_yaw]).T
+    Q = [10, 10, 10, 0, 0, 0] # No penalty on velocities
+    R = 0.5
 
-    v_lim = [-1, 1]
-    omega_lim = [-casadi.pi/4, casadi.pi/4]
-    Q = [Q_x, Q_y, Q_theta]
-    R = [R_v, R_omega]
-    obs_list = [(4,0), (8,5), (6,9), (2, -4), (8,-5), (6,-9), (5, -6)]
+    # # TODO Move the definition of obstacles to env, not in agents
+    init_state = [x_0, y_0, theta_0, 0, 0, 0]
+    qc = QuadCopter(init_state, Q, R, N, v_max, r_max)
 
-    # TODO Move the definition of obstacles to env, not in agents
-    init_state = [x_0, y_0, theta_0]
-    mpc_cbf = MPC_CBF_Unicycle(0, dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obs_list, flag_cbf=True)
-    world.add_agents([mpc_cbf])
     state_0 = casadi.DM(init_state)
-    u0 = casadi.DM.zeros((mpc_cbf.n_controls, N))
+    u0 = casadi.DM.zeros((qc.n_controls, N))
     X0 = casadi.repmat(state_0, 1, N + 1)
-    cat_states = dm_to_array(X0)
-    cat_controls = dm_to_array(u0[:, 0])
+    cat_states = np.array(X0.full())
+    cat_controls = np.array(u0[:, 0].full())
 
-    # x_arr = [x_0]
-    # y_arr = [y_0]
-    # states_hist = [np.array(init_state)]
-    heatmaps = [np.copy(world.heatmap)]
+
     for i in range(len(ref_states)): 
-        u, X_pred = mpc_cbf.solve(X0, u0, ref_states, i)
+        u, X_pred = qc.solve(X0, u0, ref_states, i)
         
-        cat_states = np.dstack((cat_states, dm_to_array(X_pred)))
-        cat_controls = np.dstack((cat_controls, dm_to_array(u[:, 0])))
+        cat_states = np.dstack((cat_states, np.array(X_pred.full())))
+        cat_controls = np.dstack((cat_controls, np.array(u[:, 0].full())))
         
-        t0, X0, u0 = mpc_cbf.shift_timestep(dt, t0, X_pred, u)
-        mpc_cbf.states = X0[:, 1]
-        # states_hist.append(mpc_cbf.states)
-        world.update_heatmap()
-        
-        heatmaps.append(np.copy(world.heatmap))
-        # x_arr.append(X0[0,1])
-        # y_arr.append(X0[1,1])
-        # idx += 1
+        t0, X0, u0 = qc.shift_timestep(t0, X_pred, u)
+        qc.states = X0[:, 1]
+
     
     num_frames = len(ref_states)
-    # To be replaced
-    simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, dt, N,
-         np.array([x_0, y_0, theta_0, x_goal, y_goal, theta_goal]), save=False)
+    simulate(ref_states, cat_states, num_frames, np.array([x_0, y_0, theta_0, x_goal, y_goal, theta_goal]), save=True)
 
 if __name__ == "__main__":
     main()
