@@ -2,16 +2,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Constants
-num_tests = 500
-base_wind_speeds = np.arange(0, 15.1, 0.1)  # Base wind speed from 0 to 15 m/s
-gust_range = (0, 5)  # Gusts range from 0 to 5 m/s
+num_tests = 5  # Reduced simulation count for faster results
 dt = 0.01  # Time step for simulation
-simulation_time = 10  # seconds
-mass = 1.0  # kg (example mass of quadcopter)
+simulation_time = 50  # seconds
+mass = 1.5  # kg (example mass of quadcopter)
 gravity = 9.81  # m/s^2
-drag_coefficient = 0.1  # Example drag coefficient
-effective_area = 0.5  # Effective area facing the wind (m^2)
+drag_coefficient = 1  # Example drag coefficient
+effective_area = 0.03  # Effective area facing the wind (m^2)
 air_density = 1.225  # kg/m^3
+moment_of_inertia = 0.03  # Example moment of inertia (kg*m^2)
+l = 0.2  # length of the UAV
+
 
 # Placeholder function for control algorithm
 def control_algorithm(state):
@@ -22,100 +23,122 @@ def control_algorithm(state):
     F1, F2 = 0.0, 0.0  # Example: No control implemented yet
     return F1, F2
 
-# Enhanced dynamics simulation function
-def simulate_with_positions(base_wind, gust_amplitude, initial_x, initial_z, num_tests, dt, simulation_time):
-    landing_distances = []
+
+# Enhanced dynamics simulation function with rotation and vertical wind
+def simulate_with_rotation_and_wind(
+        base_wind, gust_amplitude, initial_x, initial_z, num_tests, dt, simulation_time
+):
+    landing_positions = []
     for _ in range(num_tests):
-        x, z = initial_x, initial_z  # Initial position
-        vx, vz = 0.0, 0.0  # Initial velocity
+        x, z, theta = initial_x, initial_z, 0.0  # Initial position and orientation
+        vx, vz, omega = 0.0, 0.0, 0.0  # Initial velocities and angular velocity
         time = 0.0
+
         while time < simulation_time:
-            # Wind velocity components (constant base wind + gust)
-            gust = np.random.uniform(-gust_amplitude, gust_amplitude)
-            wind_speed = base_wind + gust # wind speed is a scalar?
+            gust_horizontal = np.random.uniform(-gust_amplitude, gust_amplitude)
+            gust_vertical = 0.0  # Placeholder: vertical wind set to zero
+            wind_horizontal = base_wind + gust_horizontal
+            wind_vertical = gust_vertical
 
-            # Relative velocity
-            u_rel = vx - wind_speed # only wind along x-axis?
-            w_rel = vz
+            u_rel = vx - wind_horizontal  # Relative horizontal velocity
+            w_rel = vz - wind_vertical  # Relative vertical velocity
 
-            # Aerodynamic drag forces
-            f_x_drag = -0.5 * air_density * drag_coefficient * effective_area * u_rel * abs(u_rel)
-            f_z_drag = -0.5 * air_density * drag_coefficient * effective_area * w_rel * abs(w_rel)
+            effective_area_x = effective_area * abs(np.cos(theta))  # Horizontal projected area
+            effective_area_z = effective_area * abs(np.sin(theta))  # Vertical projected area
 
-            # Control forces (currently zero)
-            F1, F2 = control_algorithm([x, z, vx, vz]) # Not considerding thetha?
+            f_x_drag = -0.5 * air_density * drag_coefficient * effective_area_x * u_rel * abs(u_rel)
+            f_z_drag = -0.5 * air_density * drag_coefficient * effective_area_z * w_rel * abs(w_rel)
+
+            F1, F2 = control_algorithm([x, z, vx, vz, theta, omega])
             total_thrust = F1 + F2
+            torque = (F2 - F1) * l
 
-            # Net forces.
-            f_x = f_x_drag # why thrust only works on the z direction?
+            f_x = f_x_drag
             f_z = f_z_drag + total_thrust - mass * gravity
 
-            # Update accelerations
+            alpha = torque / moment_of_inertia  # Angular acceleration
+            omega += alpha * dt
+            theta += omega * dt  # Update angle
+
             ax = f_x / mass
             az = f_z / mass
 
-            # Update velocities
             vx += ax * dt
             vz += az * dt
 
-            # Update positions
             x += vx * dt
             z += vz * dt
 
-            # Stop if the quadcopter reaches the ground
             if z <= 0:
                 break
 
             time += dt
 
-        landing_distances.append((x, z))  # Record landing position
-    return landing_distances
+        # Ensure positions are appended as tuples (x, z, theta)
+        landing_positions.append((x, z, theta))
+    return landing_positions
+
 
 # Simulation settings
 initial_heights = np.arange(3, 101, 1)  # Mode 1: Vary initial z from 3m to 100m
 initial_x_positions = np.arange(-20, 21, 1)  # Mode 2: Vary initial x from -20m to 20m
-num_tests = 5  # Reduced simulation count
+# Wind range settings
+base_wind_speeds = np.arange(5, 10.5, 0.5)  # Base wind speeds from 5 to 10 m/s
+gust_range = (0, 5)  # Gust component varies from 0 to 5 m/s
 
-# Collect results for varying z positions (Mode 1)
-results_varying_z = {}
+# Collect results for Mode 1: Varying initial heights (z_0)
+results_with_rotation_varying_z = {}
 for initial_x in [0]:  # Test with x fixed at 0 for varying z
-    results_varying_z[initial_x] = []
+    results_with_rotation_varying_z[initial_x] = []
     for initial_z in initial_heights:
-        distances = simulate_with_positions(
-            base_wind=5, gust_amplitude=2,  # Example base wind and gust amplitude
-            initial_x=initial_x, initial_z=initial_z,
-            num_tests=num_tests, dt=dt, simulation_time=simulation_time
-        )
-        results_varying_z[initial_x].append(distances)
+        wind_results = []
+        for base_wind in base_wind_speeds:
+            positions = simulate_with_rotation_and_wind(
+                base_wind=base_wind,
+                gust_amplitude=gust_range[1],
+                initial_x=initial_x,
+                initial_z=initial_z,
+                num_tests=num_tests,
+                dt=dt,
+                simulation_time=simulation_time,
+            )
+            wind_results.extend(positions)
+        results_with_rotation_varying_z[initial_x].append(wind_results)
 
-# Collect results for varying x positions (Mode 2)
-results_varying_x = {}
+# Collect results for Mode 2: Varying x positions (horizontal position) with z fixed at 10
+results_with_rotation_varying_x = {}
 for initial_z in [10]:  # Test with z fixed at 10m for varying x
-    results_varying_x[initial_z] = []
+    results_with_rotation_varying_x[initial_z] = []
     for initial_x in initial_x_positions:
-        distances = simulate_with_positions(
-            base_wind=5, gust_amplitude=2,  # Example base wind and gust amplitude
-            initial_x=initial_x, initial_z=initial_z,
-            num_tests=num_tests, dt=dt, simulation_time=simulation_time
-        )
-        results_varying_x[initial_z].append(distances)
-
-# Mode 1: Varying z (initial height) with x fixed at 0
-boxplot_data_varying_z = [
-    [np.linalg.norm(pos) for sim in results for pos in sim]
-    for results in results_varying_z[0]
+        wind_results = []
+        for base_wind in base_wind_speeds:
+            positions = simulate_with_rotation_and_wind(
+                base_wind=base_wind,
+                gust_amplitude=gust_range[1],
+                initial_x=initial_x,
+                initial_z=initial_z,
+                num_tests=num_tests,
+                dt=dt,
+                simulation_time=simulation_time,
+            )
+            wind_results.extend(positions)
+        results_with_rotation_varying_x[initial_z].append(wind_results)
+# Prepare data for Mode 1: Varying initial heights (z_0)
+boxplot_data_with_rotation_varying_z = [
+    [np.linalg.norm((pos[0], pos[1])) for pos in results]
+    for results in results_with_rotation_varying_z[0]
 ]
 
-# Mode 2: Varying x (initial horizontal position) with z fixed at 10
-boxplot_data_varying_x = [
-    [np.linalg.norm(pos) for sim in results for pos in sim]
-    for results in results_varying_x[10]
+# Prepare data for Mode 2: Varying initial horizontal positions (x_0)
+boxplot_data_with_rotation_varying_x = [
+    [np.linalg.norm((pos[0], pos[1])) for pos in results]
+    for results in results_with_rotation_varying_x[10]
 ]
 
-# Plot boxplot for Mode 1: Varying z
+# Plot Boxplot for Mode 1: Varying Initial Height (z_0)
 plt.figure(figsize=(14, 8))
 plt.boxplot(
-    boxplot_data_varying_z,
+    boxplot_data_with_rotation_varying_z,
     notch=False,
     patch_artist=False,
     showmeans=True,
@@ -132,15 +155,15 @@ plt.xticks(
 )
 plt.xlabel("Initial Height (z_0) [m]")
 plt.ylabel("Absolute Landing Distance [m]")
-plt.title("Reachability Analysis: Boxplot for Varying Initial Height (z_0)")
+plt.title("Reachability with Rotation: Boxplot for Varying Initial Height (z_0)")
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
 plt.show()
 
-# Plot boxplot for Mode 2: Varying x
+# Plot Boxplot for Mode 2: Varying Initial Horizontal Position (x_0)
 plt.figure(figsize=(14, 8))
 plt.boxplot(
-    boxplot_data_varying_x,
+    boxplot_data_with_rotation_varying_x,
     notch=False,
     patch_artist=False,
     showmeans=True,
@@ -157,7 +180,7 @@ plt.xticks(
 )
 plt.xlabel("Initial Horizontal Position (x_0) [m]")
 plt.ylabel("Absolute Landing Distance [m]")
-plt.title("Reachability Analysis: Boxplot for Varying Initial Horizontal Position (x_0)")
+plt.title("Reachability with Rotation: Boxplot for Varying Initial Horizontal Position (x_0)")
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
 plt.show()
