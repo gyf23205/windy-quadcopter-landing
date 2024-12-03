@@ -5,7 +5,7 @@ matplotlib.use('tkagg')
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from r_star import RStarPlanner
-from quadcopter import QuadCopter
+from models.quadcopter import QuadCopter
 from matplotlib.lines import Line2D
 from plan_dubin import plan_dubins_path
 
@@ -170,7 +170,6 @@ def main(args=None):
     Q = [10, 10, 10, 0, 0, 0] # No penalty on velocities
     R = 0.5
 
-    # # TODO Move the definition of obstacles to env, not in agents
     init_state = [x_0, y_0, theta_0, 0, 0, 0]
     qc = QuadCopter(init_state, Q, R, N, v_max, r_max)
 
